@@ -8,15 +8,30 @@
 #define COLOR_ORDER GRB         // RGB灯珠中红色、绿色、蓝色LED的排列顺序
 
 #define LED_POWER 13  
-#define COLOR_NUMBER 7
+#define SWITCH_HIGH 8
+#define LEFT_SWITCH 6
+#define RIGHT_SWITCH 7
+
+#define COLOR_NUMBER 4
+
+#define DELAY 100 // frequency = 1000/DELAY
+#define QUEUE_LEN 5
 
 uint8_t max_bright = 128;       // LED亮度控制变量，可使用数值为 0 ～ 255， 数值越大则光带亮度越高
 CRGB leds[NUM_LEDS]; 
 
-int colorList_R[COLOR_NUMBER] = {255,255,255,0,0,0,139};
-int colorList_G[COLOR_NUMBER] = {0,165,255,255,127,0,0};
-int colorList_B[COLOR_NUMBER] = {0,0,0,0,255,255,255};
+int colorList_R[COLOR_NUMBER] = {255,255,0,0};
+int colorList_G[COLOR_NUMBER] = {0,255,255,0};
+int colorList_B[COLOR_NUMBER] = {0,0,0,255};
 int color_ctr = 0;
+
+int pitch_queue[QUEUE_LEN] = {0,0,0,0,0};
+int row_queue[QUEUE_LEN] = {0,0,0,0,0};
+int cur_ptr = 0;
+
+int LEFT_PITCH_BAR = 120;
+int RIGHT_PITCH_BAR = -120;
+
 
 float fRad2Deg = 57.295779513f; //将弧度转为角度的乘数
 const int MPU = 0x68; //MPU-6050的I2C地址
@@ -34,7 +49,8 @@ Kalman kalmanPitch; //Pitch角滤波器
 //const int gesture_detect_interval = 20; //
 //int gesture_ctr = 0; 
 int next_gesture = 0; // 0 for left, 1 for right
-
+int leftswitch = 0;
+int rightswitch = 0;
 void setup() {
   Serial.begin(9600); //初始化串口，指定波特率
   Wire.begin(); //初始化Wire库
@@ -46,99 +62,136 @@ void setup() {
   pinMode(LED_POWER,OUTPUT); 
   digitalWrite(LED_POWER,HIGH);
 
+  pinMode(SWITCH_HIGH,OUTPUT); 
+  digitalWrite(SWITCH_HIGH,HIGH);
+
+  pinMode(LEFT_SWITCH,INPUT); 
+  pinMode(RIGHT_SWITCH,INPUT); 
+
   LEDS.addLeds<LED_TYPE, DATA_PIN, COLOR_ORDER>(leds, NUM_LEDS); 
-  FastLED.setBrightness(max_bright);
-
-  for(int i = 0; i<NUM_LEDS; i++){
-    leds[i] = CRGB::Blue;          // 设置灯带中第一个灯珠颜色为红色，leds[0]为第一个灯珠，leds[1]为第二个灯珠
-  }
-
-  FastLED.show();       
+  FastLED.setBrightness(max_bright);    
 }
 
 void loop() {
-  int readouts[nValCnt];
-  ReadAccGyr(readouts); //读出测量值
-  
-  float realVals[7];
-  Rectify(readouts, realVals); //根据校准的偏移量进行纠正
-
-  //计算加速度向量的模长，均以g为单位
-  float fNorm = sqrt(realVals[0] * realVals[0] + realVals[1] * realVals[1] + realVals[2] * realVals[2]);
-  float fRoll = GetRoll(realVals, fNorm); //计算Roll角
-  if (realVals[1] > 0) {
-    fRoll = -fRoll;
-  }
-  float fPitch = GetPitch(realVals, fNorm); //计算Pitch角
-  if (realVals[0] < 0) {
-    fPitch = -fPitch;
-  }
-
-  //计算两次测量的时间间隔dt，以秒为单位
-  unsigned long nCurTime = micros();
-  float dt = (double)(nCurTime - nLastTime) / 1000000.0;
-  //对Roll角和Pitch角进行卡尔曼滤波
-  float fNewRoll = kalmanRoll.getAngle(fRoll, realVals[4], dt);
-  float fNewPitch = kalmanPitch.getAngle(fPitch, realVals[5], dt);
-  //跟据滤波值计算角度速
-  float fRollRate = (fNewRoll - fLastRoll) / dt;
-  float fPitchRate = (fNewPitch - fLastPitch) / dt;
-  
-
- //更新Roll角和Pitch角
-  fLastRoll = fNewRoll;
-  fLastPitch = fNewPitch;
-  //更新本次测的时间
-  nLastTime = nCurTime;
 
 
-  //向串口打印输出Roll角和Pitch角，运行时在Arduino的串口监视器中查看
+  leftswitch = digitalRead(LEFT_SWITCH);
+  rightswitch = digitalRead(RIGHT_SWITCH);
+
+  if(leftswitch){
+
+
+    // for(int i = 0; i<NUM_LEDS; i++){
+    //   leds[i] = CRGB::Blue;          // 设置灯带中第一个灯珠颜色为蓝色
+    // }
+
+    int readouts[nValCnt];
+    ReadAccGyr(readouts); //读出测量值
+    
+    float realVals[7];
+    Rectify(readouts, realVals); //根据校准的偏移量进行纠正
+
+    //计算加速度向量的模长，均以g为单位
+    float fNorm = sqrt(realVals[0] * realVals[0] + realVals[1] * realVals[1] + realVals[2] * realVals[2]);
+    float fRoll = GetRoll(realVals, fNorm); //计算Roll角
+    if (realVals[1] > 0) {
+      fRoll = -fRoll;
+    }
+    float fPitch = GetPitch(realVals, fNorm); //计算Pitch角
+    if (realVals[0] < 0) {
+      fPitch = -fPitch;
+    }
+
+    //计算两次测量的时间间隔dt，以秒为单位
+    unsigned long nCurTime = micros();
+    float dt = (double)(nCurTime - nLastTime) / 1000000.0;
+    //对Roll角和Pitch角进行卡尔曼滤波
+    float fNewRoll = kalmanRoll.getAngle(fRoll, realVals[4], dt);
+    float fNewPitch = kalmanPitch.getAngle(fPitch, realVals[5], dt);
+    //跟据滤波值计算角度速
+    float fRollRate = (fNewRoll - fLastRoll) / dt;
+    float fPitchRate = (fNewPitch - fLastPitch) / dt;
+    
+
+  //更新Roll角和Pitch角
+    fLastRoll = fNewRoll;
+    fLastPitch = fNewPitch;
+    //更新本次测的时间
+    nLastTime = nCurTime;
 
     // detect gesture
-  if(fPitchRate>100){ // TODO: Change this
-      if(next_gesture==1){
-      Serial.print("right!");
-      Serial.print("\n");
-      next_gesture = 0;
-      // color
-      color_ctr = (color_ctr+1)%COLOR_NUMBER;
-      for(int i = 0; i<NUM_LEDS; i++){
-          leds[i] = CRGB(colorList_R[color_ctr],colorList_G[color_ctr],colorList_B[color_ctr]);
-        }
-      FastLED.show();       
-      }
 
+    int pitch_gesture = CheckPitch();
+    if(pitch_gesture==1){
+      PosPrinter(1);
+      ColorDealer(1);
+    }
+    else if(pitch_gesture==2){
+      PosPrinter(2);
+      ColorDealer(2);
+    }
+    // if(fPitchRate>100){ // TODO: Change this
+    //     if(next_gesture==1){
+    //     PosPrinter(1);
+    //     ColorDealer(next_gesture);
+    //     next_gesture = 0;
+    //     }
 
-   }
-  else if(fPitchRate<-120){
-      if(next_gesture==0){
-      Serial.print("left!");
-      Serial.print("\n");
-      next_gesture = 1;
-      //color
-      color_ctr = (color_ctr+1)%COLOR_NUMBER;
-      for(int i = 0; i<NUM_LEDS; i++){
-          //leds[i] = CRGB::Red;          // 设置灯带中第一个灯珠颜色为红色，leds[0]为第一个灯珠，leds[1]为第二个灯珠
-          leds[i] = CRGB(colorList_R[color_ctr],colorList_G[color_ctr],colorList_B[color_ctr]);
-        }
-      FastLED.show();       
-      }
+    // }
+    // else if(fPitchRate<-120){
+    //     if(next_gesture==0){
+    //     PosPrinter(2);
+    //     ColorDealer(next_gesture);
+    //     next_gesture = 1;
+    //   }
+
+    // }
+    Serial.print("Roll:");
+    Serial.print(fNewRoll); Serial.print('(');
+    Serial.print(fRollRate); Serial.print("),\tPitch:");
+    Serial.print(fNewPitch); Serial.print('(');
+    Serial.print(fPitchRate); Serial.print(")\n");
+    delay(DELAY); 
+
+    pitch_queue[cur_ptr] = fPitchRate;
+    row_queue[cur_ptr] = fRollRate;
+    cur_ptr = (cur_ptr+1)%QUEUE_LEN;
   }
-  
- 
-  
-  // Serial.print("Roll:");
-  // Serial.print(fNewRoll); Serial.print('(');
-  // Serial.print(fRollRate); Serial.print("),\tPitch:");
-  // Serial.print(fNewPitch); Serial.print('(');
-  // Serial.print(fPitchRate); Serial.print(")\n");
-  // delay(10);
 
+  else{
+    for(int i = 0; i<NUM_LEDS; i++){
+      leds[i] = CRGB(0,0,0);          // reset
+    }
+    FastLED.show(); 
+  }
 }
 
-//向MPU6050写入一个字节的数据
-//指定寄存器地址与一个字节的值
-void WriteMPUReg(int nReg, unsigned char nVal) {
+void PosPrinter(int pos){
+  // pos = 1: wave left
+  // pos = 2: wave right
+  // pos = 3: rotate left
+  // pos = 4: rotate right
+  // todo: more
+  if(pos==1){
+      Serial.print("wave left!");
+      Serial.print("\n");
+  }
+  else if(pos==2){
+      Serial.print("wave right!");
+      Serial.print("\n");
+  }
+}
+
+
+void ColorDealer(int direction){
+  color_ctr = (color_ctr+1)%COLOR_NUMBER;
+  for(int i = 0; i<NUM_LEDS; i++){
+      leds[i] = CRGB(colorList_R[color_ctr],colorList_G[color_ctr],colorList_B[color_ctr]);
+  }
+  FastLED.show();     
+}
+
+void WriteMPUReg(int nReg, unsigned char nVal) { // write something to MPU6050
   Wire.beginTransmission(MPU);
   Wire.write(nReg);
   Wire.write(nVal);
@@ -211,3 +264,40 @@ void Rectify(int *pReadout, float *pRealVals) {
   }
 }
 
+int CheckPitch(){
+  // check if rotate left or right
+  int checkres[2] = {0,0};
+  int check_ptr = 0;
+  for(int i = 0; i < QUEUE_LEN; i++){
+      int ptr = (cur_ptr+1+i)%QUEUE_LEN;
+      if(pitch_queue[ptr]>LEFT_PITCH_BAR){
+        checkres[check_ptr] = 1;
+        check_ptr ++;
+        if(check_ptr==2){
+          break;
+        }
+      }
+      else if(pitch_queue[ptr]<RIGHT_PITCH_BAR){
+        checkres[check_ptr] = -1;
+        check_ptr ++;
+        if(check_ptr==2){
+          break;
+        }       
+      }
+  }
+  if(checkres[0]==-1 & checkres[1]==1){
+    clearpitch();
+    return 2; // wave right
+  }
+  if(checkres[0]==1 & checkres[1]==-1){
+    clearpitch();
+    return 1; // wave left
+  }
+  return 0;
+}
+
+void clearpitch(){
+  for(int i = 0; i < QUEUE_LEN; i++){
+    pitch_queue[i] = 0;
+  }
+}
